@@ -59,6 +59,79 @@ namespace DataAccessWrapper
             return t;
         }
 
+        public DataSet QueryMultipleDataSet(string sql)
+        {
+            return QueryMultipleDataSetInternal(CreateCommand(sql));
+        }
+
+        public DataSet QueryMultipleDataSet(string sql, params DbParameter[] parameters)
+        {
+            return QueryMultipleDataSetInternal(CreateCommand(sql, parameters));
+        }
+
+        public DataSet QueryMultipleDataSet(DbCommand command)
+        {
+            return QueryMultipleDataSetInternal(command);
+        }
+
+        private DataSet QueryMultipleDataSetInternal(DbCommand command)
+        {
+            var da = Factory.CreateDataAdapter();
+            da.SelectCommand = command;
+            var ds = new DataSet();
+            da.Fill(ds);
+
+            return ds;
+        }
+
+        public IEnumerable<DataTable> QueryMultipleDataTable(string sql)
+        {
+            return QueryMultipleDataTableInternal(CreateCommand(sql));
+        }
+
+        public IEnumerable<DataTable> QueryMultipleDataTable(string sql, params DbParameter[] parameters)
+        {
+            return QueryMultipleDataTableInternal(CreateCommand(sql, parameters));
+        }
+
+        public IEnumerable<DataTable> QueryMultipleDataTable(DbCommand command)
+        {
+            return QueryMultipleDataTableInternal(command);
+        }
+
+        public IEnumerable<DataTable> QueryMultipleDataTable(IEnumerable<DbCommand> commands)
+        {
+            foreach (var command in commands)
+            {
+                foreach (var table in QueryMultipleDataTableInternal(command))
+                {
+                    yield return table;
+                }
+            }
+        }
+
+        private IEnumerable<DataTable> QueryMultipleDataTableInternal(DbCommand command)
+        {
+            using (var cnn = NewConnection())
+            using (command)
+            {
+                command.Connection = cnn;
+                cnn.Open();
+
+                var reader = command.ExecuteReader();
+
+                while (reader.HasRows)
+                {
+                    var t = new DataTable();
+                    t.Load(reader);
+
+                    yield return t;
+                    reader.NextResult();
+                }
+            }
+        }
+
+
         public DbDataReader QueryDataReader(string sql)
         {
             return QueryDataReaderInternal(CreateCommand(sql));

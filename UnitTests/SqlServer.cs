@@ -257,5 +257,15 @@ namespace UnitTests
 
             }
         }
+
+        [TestMethod]
+        [TestCategory("Iterations")]
+        public void IterateMultipleDataTable()
+        {
+            foreach (var table in DC().QueryMultipleDataTable(SELECT_SQL + " go\n" + SELECT_SQL))
+            {
+                var x = table.Rows.Count;
+            }
+        }
     }
 }
