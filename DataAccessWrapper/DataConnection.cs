@@ -225,7 +225,7 @@ namespace DataAccessWrapper
             }
             using (var reader = QueryDataReaderInternal(command))
             {
-                
+
             }
         }
 
@@ -405,7 +405,7 @@ namespace DataAccessWrapper
                             }
                         }
                     }
-                    
+
                 }
                 yield return rows.ToArray();
             }
@@ -488,7 +488,7 @@ namespace DataAccessWrapper
             {
                 t.Load(command.ExecuteReader(CommandBehavior.SchemaOnly));
             }
-                
+
             return t;
         }
 

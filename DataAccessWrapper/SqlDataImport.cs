@@ -9,42 +9,18 @@ using System.Data.Common;
 using System.Diagnostics;
 using System.Reflection;
 
-namespace DAL
+namespace DataAccessWrapper
 {
     /// <summary>
     /// Provides methods for importing data into a SqlServer database using SqlBulkCopy
     /// </summary>
-    public class SqlDataImport
+    public class SqlDataImport : DataImport
     {
-        private string cs;
-
-        public event EventHandler<Exception> Error;
-        public event EventHandler<TableInfo> ImportStarting;
-        public event EventHandler<DataExportArgs> ImportCompleted;
-        public event EventHandler<DataExportArgs> ImportProgress;
-
-        public int DataReaderRowsImported { get; private set; }
-
-        protected DataExportArgs args;
-        private Stopwatch timer;
-        //private int rowTotal;
-        
+        protected string cs;
 
         public SqlDataImport(string connectionString)
         {
             cs = connectionString;
-            args = new DataExportArgs();
-            timer = new Stopwatch();
-        }
-
-        public SqlDataImport(string server, string database)
-        {
-            var cb = new SqlConnectionStringBuilder
-            {
-                DataSource = server,
-                InitialCatalog = database,
-                IntegratedSecurity = true
-            };
         }
 
         public void ImportDataReader(DbDataReader reader, string destTable, bool truncateDestTable, IEnumerable<SqlBulkCopyColumnMapping> columnMapping)
@@ -66,20 +42,17 @@ namespace DAL
         {
             ImportDataReaderInternal(reader, destTable, truncateDestTable, null, 50000);
         }
-        private void ImportDataReaderInternal(DbDataReader reader, string destTable, bool truncateDestTable, IEnumerable<SqlBulkCopyColumnMapping> columnMapping, int batchSize)
+
+        protected virtual void ImportDataReaderInternal(DbDataReader reader, string destTable, bool truncateDestTable, IEnumerable<SqlBulkCopyColumnMapping> columnMapping, int batchSize)
         {
+            OnImportStarting(new DataImportStartingArgs() { TableName = destTable });
+
             using (var bulk = new SqlBulkCopy(cs))
             {
                 bulk.BulkCopyTimeout = 0;
                 bulk.DestinationTableName = destTable;
                 bulk.NotifyAfter = batchSize;
-                bulk.SqlRowsCopied += (s, e) =>
-                {
-                    //Console.WriteLine(e.RowsCopied);
-                    args.RowsImported = (int)e.RowsCopied;
-                    OnImportProgress(args);
-                    
-                };
+                bulk.SqlRowsCopied += (s, e) => OnImportProgress(new DataImportProgressArgs() { TableName = destTable, RowsImported = batchSize, TotalRowsImported = (int)e.RowsCopied });
 
                 if (columnMapping != null)
                 {
@@ -88,22 +61,20 @@ namespace DAL
                         bulk.ColumnMappings.Add(col.SourceColumn, col.DestinationColumn);
                     }
                 }
-                
+
                 try
                 {
                     if (truncateDestTable)
                         Truncate(bulk.DestinationTableName);
 
                     bulk.WriteToServer(reader);
-                    args.RowsImported = bulk.GetRowsCopied();
+                    var rowsCopied = bulk.GetRowsCopied();
 
-
-                    //args.RowsImported = bulk.GetRowsCopied();
-                    //OnImportCompleted();
+                    OnImportCompleted(new DataImportCompleteArgs() { TotalRowsImported = rowsCopied, TableName = destTable });
                 }
                 catch (Exception ex)
                 {
-                    OnError(ex);
+                    OnError(new DataImportErrorAgrs() { TableName = destTable, Error = ex, ImportStarted = importStart, ImportCompleted = importStop });
                 }
             }
         }
@@ -118,10 +89,9 @@ namespace DAL
             ImportDataTableInternal(table, destTable, truncateDestTable, null);
         }
 
-        private void ImportDataTableInternal(DataTable table, string destTable, bool truncateDestTable, IEnumerable<SqlBulkCopyColumnMapping> columnMapping)
+        protected virtual void ImportDataTableInternal(DataTable table, string destTable, bool truncateDestTable, IEnumerable<SqlBulkCopyColumnMapping> columnMapping)
         {
-            args.Table = new TableInfo { DestTableName = destTable, SourceTableName = destTable };
-            OnImportStarting(args.Table);
+            OnImportStarting(new DataImportStartingArgs() { TableName = destTable });
 
             using (var bulk = new SqlBulkCopy(cs))
             {
@@ -143,12 +113,11 @@ namespace DAL
 
                     bulk.WriteToServer(table);
 
-                    args.RowsImported = table.Rows.Count;
-                    OnImportCompleted(args);
+                    OnImportCompleted(new DataImportCompleteArgs() { TotalRowsImported = table.Rows.Count, TableName = destTable });
                 }
                 catch (Exception ex)
                 {
-                    OnError(ex);
+                    OnError(new DataImportErrorAgrs() { TableName = destTable, Error = ex, ImportStarted = importStart, ImportCompleted = DateTime.Now });
                 }
             }
         }
@@ -162,8 +131,10 @@ namespace DAL
             ImportDataRowInternal(rows, destTable, truncateDestTable, null);
         }
 
-        private void ImportDataRowInternal(DataRow[] rows, string destTable, bool truncateDestTable, IEnumerable<SqlBulkCopyColumnMapping> columnMapping)
+        protected virtual void ImportDataRowInternal(DataRow[] rows, string destTable, bool truncateDestTable, IEnumerable<SqlBulkCopyColumnMapping> columnMapping)
         {
+            OnImportStarting(new DataImportStartingArgs() { TableName = destTable });
+
             using (var bulk = new SqlBulkCopy(cs))
             {
                 bulk.BulkCopyTimeout = 0;
@@ -183,20 +154,212 @@ namespace DAL
                         Truncate(bulk.DestinationTableName);
 
                     bulk.WriteToServer(rows);
+
+                    OnImportCompleted(new DataImportCompleteArgs() { TotalRowsImported = rows.Count(), TableName = destTable });
                 }
                 catch (Exception ex)
                 {
-                    OnError(ex);
+                    OnError(new DataImportErrorAgrs() { TableName = destTable, Error = ex, ImportStarted = importStart, ImportCompleted = DateTime.Now });
                 }
             }
         }
 
-        private void Truncate(string tableName)
+        public void ImportDataRow(DbConnection connection, DbCommand command, string destTable, int batchSize)
+        {
+            ImportDataRowInternal(connection, command, destTable, batchSize);
+        }
+
+        protected void ImportDataRowInternal(DbConnection connection, DbCommand command, string destTable, int batchSize)
+        {
+            command.Connection = connection;
+            command.CommandTimeout = 3600;
+            connection.Open();
+
+            var t = new DataTable();
+
+            using (var cnn = new SqlConnection(cs))
+            using (var cmd = cnn.CreateCommand())
+            {
+                cmd.CommandText = $"select * from {destTable} where 1=0";
+                cnn.Open();
+                t.Load(cmd.ExecuteReader());
+            }
+
+
+            using (var reader = command.ExecuteReader())
+            {
+                var rows = new List<DataRow>(batchSize);
+
+                OnImportStarting(new DataImportStartingArgs() { TableName = destTable });
+                var truncateDestTable = true;
+                var runningCount = 0;
+
+                while (reader.Read())
+                {
+                    runningCount += 1;
+                    var row = t.NewRow();
+
+                    for (int i = 0; i < reader.FieldCount; i++)
+                    {
+                        try
+                        {
+                            var data = reader[reader.GetName(i)];
+
+                            //weird infolease char that violates max length when populating datatable for import
+                            row[reader.GetName(i)] = data.ToString().Contains("\u009d") ? "" : data;
+                        }
+                        catch (Exception ex)
+                        {
+                            OnDataError(new DataImportDataErrorArgs() { TableName = destTable, Error = ex, DataRowItemArray = row.ItemArray });
+
+                            //OnError(new DataImportErrorAgrs() { TableName = destTable, Error = ex, ImportStarted = importStart, ImportCompleted = DateTime.Now });
+                        }
+
+                    }
+
+                    rows.Add(row);
+
+
+                    if (rows.Count() == batchSize)
+                    {
+                        ImportDataRow2(destTable, rows.ToArray(), truncateDestTable, runningCount);
+                        rows.Clear();
+                        t.Rows.Clear();
+                        t.Clear();
+                        truncateDestTable = false;
+                    }
+                }
+
+                if (rows.Any())
+                {
+                    ImportDataRow2(destTable, rows.ToArray(), truncateDestTable, runningCount);
+                    rows.Clear();
+                    t.Rows.Clear();
+                    t.Clear();
+                }
+
+                OnImportCompleted(new DataImportCompleteArgs() { TotalRowsImported = CountRows(destTable), TableName = destTable });
+            }
+
+        }
+
+        private void ImportDataRow2(string destTable, DataRow[] rows, bool truncateDestTable, int totalRows)
+        {
+            using (var bulk = new SqlBulkCopy(cs))
+            {
+                bulk.BulkCopyTimeout = 0;
+                bulk.DestinationTableName = destTable;
+
+                try
+                {
+                    if (truncateDestTable)
+                        Truncate(bulk.DestinationTableName);
+
+                    bulk.WriteToServer(rows);
+                    OnImportProgress(new DataImportProgressArgs() { TableName = destTable, RowsImported = rows.Length, TotalRowsImported = totalRows });
+
+                }
+                catch (Exception ex)
+                {
+                    OnError(new DataImportErrorAgrs() { TableName = destTable, Error = ex, ImportStarted = importStart, ImportCompleted = importStop });
+                }
+            }
+        }
+
+        public void MergeDataTable(DataTable table, string destTable, string tempTable, params string[] keys)
+        {
+            using (var cnn = new SqlConnection(cs))
+            {
+                cnn.Open();
+
+                using (var cmd = cnn.CreateCommand())
+                {
+                    cmd.CommandText = $"IF OBJECT_ID('tempdb..#'{tempTable}') IS NOT NULL DROP TABLE #{tempTable}";
+                    cmd.ExecuteNonQuery();
+                }
+
+                using (var cmd = cnn.CreateCommand())
+                {
+                    cmd.CommandText = $"SELECT * into #{tempTable} FROM {destTable} WHERE 1=0";
+                    cmd.ExecuteNonQuery();
+                }
+
+                using (var bulk = new SqlBulkCopy(cnn))
+                {
+                    bulk.BulkCopyTimeout = 0;
+                    bulk.DestinationTableName = tempTable;
+                    bulk.WriteToServer(table);
+
+                }
+
+                using (var cmd = cnn.CreateCommand())
+                {
+                    cmd.CommandText = GetUpdateSqlForMerge(table, tempTable, destTable, keys);
+                    cmd.ExecuteNonQuery();
+                }
+
+                using (var cmd = cnn.CreateCommand())
+                {
+                    cmd.CommandText = GetInsertSqlForMerge(table, tempTable, destTable, keys);
+                    cmd.ExecuteNonQuery();
+                }
+
+                using (var cmd = cnn.CreateCommand())
+                {
+                    cmd.CommandText = $"DROP TABLE #{tempTable}";
+                    cmd.ExecuteNonQuery();
+                }
+            }
+        }
+
+        private string GetUpdateSqlForMerge(DataTable table, string sourceTable, string targetTable, params string[] keys)
+        {
+            var sql = @"update <target>
+                        set
+                            <columns>
+                        from <source> s
+                            join <target> t on <keys>";
+
+            var allcolnames = table.Columns.Cast<DataColumn>().Select(c => c.ColumnName);
+            var nonkeycols = allcolnames.Except(keys);
+
+            var setcols = nonkeycols.Select(c => $"{c} = s.{c} ");
+
+            var onkeys = keys.Select(c => $"s.{c} = t.{c}");
+
+
+            sql = sql.Replace("<target>", targetTable);
+            sql = sql.Replace("<source>", sourceTable);
+            sql = sql.Replace("<columns>", string.Join(",", setcols));
+            sql = sql.Replace("<keys>", string.Join(" AND ", onkeys));
+
+            return sql;
+        }
+
+        private string GetInsertSqlForMerge(DataTable table, string sourceTable, string targetTable, params string[] keys)
+        {
+            var sql = @"insert into <target>
+                        select * from <source> s
+                            left join <target> t on <keys>
+                        where t.<anykeycol> is null";
+
+            var onkeys = keys.Select(c => $"s.{c} = t.{c}");
+
+
+            sql = sql.Replace("<target>", targetTable);
+            sql = sql.Replace("<source>", sourceTable);
+            sql = sql.Replace("<keys>", string.Join(" AND ", onkeys));
+            sql = sql.Replace("<anykeycol>", keys.First());
+
+            return sql;
+        }
+
+        protected void Truncate(string tableName)
         {
             Execute($"TRUNCATE TABLE {tableName}");
         }
 
-        private int CountRows(string tablename)
+        protected int CountRows(string tablename)
         {
             using (var cnn = new SqlConnection(cs))
             using (var cmd = cnn.CreateCommand())
@@ -210,13 +373,13 @@ namespace DAL
                 }
                 catch (Exception ex)
                 {
-                    OnError(ex);
+                    //OnError(ex);
                     return -1;
                 }
             }
         }
 
-        private void Execute(string sql)
+        protected void Execute(string sql)
         {
             using (var cnn = new SqlConnection(cs))
             using (var cmd = cnn.CreateCommand())
@@ -229,41 +392,10 @@ namespace DAL
                 }
                 catch (Exception ex)
                 {
-                    OnError(ex);
+                    //OnError(ex);
                 }
             }
-        }
 
-        protected virtual void OnError(Exception e)
-        {
-            Error?.Invoke(this, e);
-        }
-
-        protected virtual void OnImportStarting(TableInfo e)
-        {
-            //rowTotal = 0;
-
-            timer.Restart();
-            args.RowsImported = 0;
-            args.ImportStart = DateTime.Now;
-            ImportStarting?.Invoke(this, e);
-        }
-
-        protected virtual void OnImportProgress(DataExportArgs e)
-        {
-            ImportProgress?.Invoke(this, e);
-        }
-
-        protected virtual void OnImportCompleted(DataExportArgs e)
-        {
-            timer.Stop();
-            e.ImportStop = DateTime.Now;
-            e.Duration = timer.Elapsed;
-
-            //args.RowsImported = CountRows(args.Table.DestTableName);
-            
-            //args.Message = $"export complete: {args.Duration.ToString()}";
-            ImportCompleted?.Invoke(this, args);
         }
     }
 

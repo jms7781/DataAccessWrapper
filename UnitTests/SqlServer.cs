@@ -29,7 +29,9 @@ namespace UnitTests
         [TestMethod]
         public void GetSchema()
         {
-            DC().GetSchema();
+            var t = DC().GetSchema();
+
+            
         }
 
         [TestMethod]
