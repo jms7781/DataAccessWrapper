@@ -292,15 +292,17 @@ namespace DataAccessWrapper
 
                 }
 
+                var columns = table.Columns.Cast<DataColumn>().Select(c => c.ColumnName);
+
                 using (var cmd = cnn.CreateCommand())
                 {
-                    cmd.CommandText = GetUpdateSqlForMerge(table, tempTable, destTable, keys);
+                    cmd.CommandText = GetUpdateSqlForMerge(columns, tempTable, destTable, keys);
                     cmd.ExecuteNonQuery();
                 }
 
                 using (var cmd = cnn.CreateCommand())
                 {
-                    cmd.CommandText = GetInsertSqlForMerge(table, tempTable, destTable, keys);
+                    cmd.CommandText = GetInsertSqlForMerge(tempTable, destTable, keys);
                     cmd.ExecuteNonQuery();
                 }
 
@@ -312,31 +314,24 @@ namespace DataAccessWrapper
             }
         }
 
-        private string GetUpdateSqlForMerge(DataTable table, string sourceTable, string targetTable, params string[] keys)
+        private string GetUpdateSqlForMerge(IEnumerable<string> columns, string sourceTable, string targetTable, params string[] keys)
         {
-            var sql = @"update <target>
+            var sql = $@"update {targetTable}
                         set
                             <columns>
-                        from <source> s
-                            join <target> t on <keys>";
+                        from {sourceTable} s
+                            join {targetTable} t on <keys>";
 
-            var allcolnames = table.Columns.Cast<DataColumn>().Select(c => c.ColumnName);
-            var nonkeycols = allcolnames.Except(keys);
-
-            var setcols = nonkeycols.Select(c => $"{c} = s.{c} ");
-
+            var setcols = columns.Except(keys).Select(c => $"{c} = s.{c}");
             var onkeys = keys.Select(c => $"s.{c} = t.{c}");
 
-
-            sql = sql.Replace("<target>", targetTable);
-            sql = sql.Replace("<source>", sourceTable);
             sql = sql.Replace("<columns>", string.Join(",", setcols));
             sql = sql.Replace("<keys>", string.Join(" AND ", onkeys));
 
             return sql;
         }
 
-        private string GetInsertSqlForMerge(DataTable table, string sourceTable, string targetTable, params string[] keys)
+        private string GetInsertSqlForMerge(string sourceTable, string targetTable, params string[] keys)
         {
             var sql = @"insert into <target>
                         select * from <source> s
