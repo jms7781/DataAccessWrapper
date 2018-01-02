@@ -333,16 +333,13 @@ namespace DataAccessWrapper
 
         private string GetInsertSqlForMerge(string sourceTable, string targetTable, params string[] keys)
         {
-            var sql = @"insert into <target>
-                        select * from <source> s
-                            left join <target> t on <keys>
+            var sql = $@"insert into {targetTable}
+                        select * from {sourceTable} s
+                            left join {targetTable} t on <keys>
                         where t.<anykeycol> is null";
 
             var onkeys = keys.Select(c => $"s.{c} = t.{c}");
 
-
-            sql = sql.Replace("<target>", targetTable);
-            sql = sql.Replace("<source>", sourceTable);
             sql = sql.Replace("<keys>", string.Join(" AND ", onkeys));
             sql = sql.Replace("<anykeycol>", keys.First());
 
