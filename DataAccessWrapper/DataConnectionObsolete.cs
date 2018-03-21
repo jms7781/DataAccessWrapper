@@ -1,79 +1,27 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Data;
 using System.Data.Common;
 
 namespace DataAccessWrapper
 {
-    public class DataConnection
+    public class DataConnectionObsolete<TConnection> where TConnection : DbConnection, new()
     {
         private string connectionString;
-        private DbProviderFactory factory;
 
-        public DataConnection(string provider, string connectionString)
+        public DataConnectionObsolete(string connectionString)
         {
             this.connectionString = connectionString;
-            factory = DbProviderFactories.GetFactory(provider);
-            
+            this.Connection = NewConnection();
         }
 
-        public static DataTable GetFactoryClasses()
-        {
-            return DbProviderFactories.GetFactoryClasses();
-        }
+        public DbConnection Connection { get; set; }
 
-        public static IEnumerable<string> GetInstalledProviders()
-        {
-            var t = GetFactoryClasses();
-
-            foreach(DataRow row in t.Rows)
-            {
-                yield return row["InvariantName"].ToString();
-            }
-        }
-
-        public DbConnection Connection
-        {
-            get
-            {
-                var c = factory.CreateConnection();
-                c.ConnectionString = connectionString;
-
-                return c;
-            }
-        }
-
-        public DbCommand Command
-        {
-            get
-            {
-                return factory.CreateCommand();
-            }
-        }
-
-        public DbDataAdapter DataAdapter
-        {
-            get
-            {
-                return factory.CreateDataAdapter();
-            }
-        }
-
-        public DbParameter Parameter
-        {
-            get
-            {
-                return factory.CreateParameter();
-            }
-        }
-
+        public DbProviderFactory Factory { get { return DbProviderFactories.GetFactory(this.Connection); } }
 
         public DataTable GetSchema()
         {
-            using (var cnn = Connection)
+            using (var cnn = NewConnection())
             {
                 cnn.Open();
                 return cnn.GetSchema();
@@ -82,7 +30,7 @@ namespace DataAccessWrapper
 
         public DataTable GetSchema(string collectionName)
         {
-            using (var cnn = Connection)
+            using (var cnn = NewConnection())
             {
                 cnn.Open();
                 return cnn.GetSchema(collectionName);
@@ -128,7 +76,7 @@ namespace DataAccessWrapper
 
         private DataSet QueryMultipleDataSetInternal(DbCommand command)
         {
-            var da = DataAdapter;
+            var da = Factory.CreateDataAdapter();
             da.SelectCommand = command;
             var ds = new DataSet();
             da.Fill(ds);
@@ -164,7 +112,7 @@ namespace DataAccessWrapper
 
         private IEnumerable<DataTable> QueryMultipleDataTableInternal(DbCommand command)
         {
-            using (var cnn = Connection)
+            using (var cnn = NewConnection())
             using (command)
             {
                 command.Connection = cnn;
@@ -201,7 +149,7 @@ namespace DataAccessWrapper
 
         private DbDataReader QueryDataReaderInternal(DbCommand command)
         {
-            using (var cnn = Connection)
+            using (var cnn = NewConnection())
             using (command)
             {
                 command.Connection = cnn;
@@ -230,11 +178,11 @@ namespace DataAccessWrapper
 
         private DbDataAdapter QueryDataAdapterInternal(DbCommand selectCommand)
         {
-            var adapter = factory.CreateDataAdapter();
-            var cb = factory.CreateCommandBuilder();
+            var adapter = Factory.CreateDataAdapter();
+            var cb = Factory.CreateCommandBuilder();
             cb.DataAdapter = adapter;
 
-            selectCommand.Connection = Connection;
+            selectCommand.Connection = NewConnection();
 
             adapter.SelectCommand = selectCommand;
             adapter.InsertCommand = cb.GetInsertCommand();
@@ -261,7 +209,7 @@ namespace DataAccessWrapper
 
         private IEnumerable<IDataRecord> QueryDataRecordInternal(DbCommand command)
         {
-            using (var cnn = Connection)
+            using (var cnn = NewConnection())
             using (command)
             {
                 command.Connection = cnn;
@@ -351,7 +299,7 @@ namespace DataAccessWrapper
 
         private T QueryValueInternal<T>(DbCommand command)
         {
-            using (var cnn = Connection)
+            using (var cnn = NewConnection())
             using (command)
             {
                 command.Connection = cnn;
@@ -380,7 +328,7 @@ namespace DataAccessWrapper
 
         private int ExecuteInternal(DbCommand command)
         {
-            using (var cnn = Connection)
+            using (var cnn = NewConnection())
             using (command)
             {
                 command.Connection = cnn;
@@ -427,7 +375,7 @@ namespace DataAccessWrapper
             var rows = new List<DataRow>();
             var schema = new DataTable();
 
-            using (var cnn = Connection)
+            using (var cnn = NewConnection())
             using (command)
             {
                 command.Connection = cnn;
@@ -465,7 +413,7 @@ namespace DataAccessWrapper
 
         public void ExecuteCommands(List<DbCommand> commands)
         {
-            using (var cnn = Connection)
+            using (var cnn = NewConnection())
             {
                 cnn.Open();
                 using (DbTransaction tran = cnn.BeginTransaction())
@@ -495,7 +443,7 @@ namespace DataAccessWrapper
 
         public void ExecuteStoredProcedure(string name)
         {
-            using (var cnn = Connection)
+            using (var cnn = NewConnection())
             using (var cmd = cnn.CreateCommand())
             {
                 cmd.CommandText = name;
@@ -505,10 +453,11 @@ namespace DataAccessWrapper
             }
         }
 
+        private TConnection NewConnection() => new TConnection() { ConnectionString = this.connectionString };
 
         public DbParameter CreateParameter(string parameterName, object value, DbType datatype)
         {
-            var p = Parameter;
+            var p = Factory.CreateParameter();
             p.ParameterName = parameterName;
             p.DbType = datatype;
             p.Value = value;
@@ -523,7 +472,7 @@ namespace DataAccessWrapper
 
         public DbCommand CreateCommand(string sql, params DbParameter[] parameters)
         {
-            var cmd = Command;
+            var cmd = Factory.CreateCommand();
             cmd.CommandText = sql;
 
             if (parameters != null)

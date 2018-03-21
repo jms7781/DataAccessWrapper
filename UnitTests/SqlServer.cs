@@ -15,9 +15,9 @@ namespace UnitTests
         private const string sql_select_param = @"select * from person.person where LastName = @1";
         private const string cs = @"Server=xps13\sqlexpress;Database=AdventureWorks2014;Trusted_Connection=True;";
 
-        private DataConnection<SqlConnection> DC()
+        private DataConnectionObsolete<SqlConnection> DC()
         {
-            return new DataConnection<SqlConnection>(cs);
+            return new DataConnectionObsolete<SqlConnection>(cs);
         }
 
         [TestMethod]
